@@ -1,0 +1,17 @@
+
+{
+  "rules": {
+    "liveTrips": {
+      "$rideId": {
+        ".read": "auth != null && (root.child('rideAccess').child($rideId).child('passengerId').val() === auth.uid || root.child('rideAccess').child($rideId).child('driverId').val() === auth.uid)",
+        ".write": "auth != null && root.child('rideAccess').child($rideId).child('driverId').val() === auth.uid"
+      }
+    },
+    "rideAccess": {
+      "$rideId": {
+        ".read": false,
+        ".write": false
+      }
+    }
+  }
+}
