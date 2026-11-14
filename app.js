@@ -1,153 +1,333 @@
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
-import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, updateProfile } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
-import { getFirestore, doc, getDoc, setDoc, collection, query, where, orderBy, onSnapshot } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
-import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js";
-import { firebaseConfig } from "./firebase-config.js";
 
-const $ = (id) => document.getElementById(id);
-const page = location.pathname.split("/").pop() || "index.html";
-const configured = firebaseConfig.apiKey && !firebaseConfig.apiKey.startsWith("PASTE_") && firebaseConfig.projectId !== "YOUR_PROJECT_ID";
-let auth, db, functions, currentUser = null, profile = null, unsubscribers = [];
-const cleanup = () => { unsubscribers.forEach(fn => fn()); unsubscribers = []; };
-const say = (el, message, type="") => { if (!el) return; el.textContent = message; el.className = `notice ${type}`; };
-const callable = (name) => httpsCallable(functions, name);
-const money = n => `R ${Number(n || 0).toFixed(2)}`;
-const escapeHtml = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const dateText = ts => ts?.toDate ? ts.toDate().toLocaleString() : "Just now";
+import { auth, db, rtdb, functions } from "./firebase-config.js";
 
-if (!configured) {
-  document.querySelectorAll(".notice").forEach(el => say(el, "Firebase is not configured yet. Follow SETUP.md to connect your Firebase project.", "error"));
-} else {
-  const app = initializeApp(firebaseConfig);
-  auth = getAuth(app); db = getFirestore(app); functions = getFunctions(app);
-  if (page === "passenger.html") initPassenger();
-  if (page === "driver.html") initDriver();
-  if (page === "admin.html") initAdmin();
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  signOut,
+  onAuthStateChanged
+} from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
+
+import {
+  doc, setDoc, getDoc, collection, query, where,
+  onSnapshot, orderBy, serverTimestamp
+} from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
+
+import {
+  ref, set, onValue, remove
+} from "https://www.gstatic.com/firebasejs/11.10.0/firebase-database.js";
+
+import { httpsCallable } from
+  "https://www.gstatic.com/firebasejs/11.10.0/firebase-functions.js";
+
+const $ = id => document.getElementById(id);
+const call = name => httpsCallable(functions, name);
+
+let currentUser = null;
+let activeTrackingStop = null;
+let gpsWatch = null;
+let online = false;
+
+function say(id, text) {
+  if ($(id)) $(id).textContent = text;
 }
 
-function wireTabs() {
-  document.querySelectorAll(".tab").forEach(btn => btn.addEventListener("click", () => {
-    document.querySelectorAll(".tab").forEach(b => b.classList.toggle("active", b === btn));
-    $("login-form")?.classList.toggle("hidden", btn.dataset.tab !== "login");
-    $("signup-form")?.classList.toggle("hidden", btn.dataset.tab !== "signup");
-  }));
+async function profile(uid) {
+  const snap = await getDoc(doc(db, "users", uid));
+  return snap.exists() ? snap.data() : null;
 }
-function wireAuth(role) {
-  wireTabs();
-  $("login-form")?.addEventListener("submit", async e => {
-    e.preventDefault(); const f = new FormData(e.currentTarget);
-    try { await signInWithEmailAndPassword(auth, f.get("email"), f.get("password")); say($("auth-message"), "Welcome back.", "success"); }
-    catch(err) { say($("auth-message"), friendly(err), "error"); }
+
+async function register(form, role) {
+  const data = Object.fromEntries(new FormData(form).entries());
+  try {
+    const credential = await createUserWithEmailAndPassword(
+      auth, data.email, data.password
+    );
+    const record = {
+      uid: credential.user.uid,
+      name: data.name,
+      phone: data.phone,
+      email: data.email,
+      role,
+      approvalStatus: role === "driver" ? "pending" : "approved",
+      isOnline: false,
+      createdAt: serverTimestamp()
+    };
+    if (role === "driver") {
+      record.vehicle = data.vehicle;
+      record.registration = data.registration;
+    }
+    await setDoc(doc(db, "users", credential.user.uid), record);
+    say("auth-message", role === "driver"
+      ? "Application submitted. Wait for administrator approval."
+      : "Passenger account created.");
+    say("admin-message", "Account created.");
+  } catch (error) {
+    say("auth-message", error.message);
+    say("admin-message", error.message);
+  }
+}
+
+$("signup-form")?.addEventListener("submit", e => {
+  e.preventDefault();
+  const role = location.pathname.includes("driver") ? "driver" : "passenger";
+  register(e.currentTarget, role);
+});
+
+$("login-form")?.addEventListener("submit", async e => {
+  e.preventDefault();
+  const data = Object.fromEntries(new FormData(e.currentTarget).entries());
+  try {
+    await signInWithEmailAndPassword(auth, data.email, data.password);
+  } catch (error) {
+    say("auth-message", error.message);
+    say("admin-message", error.message);
+  }
+});
+
+$("logout")?.addEventListener("click", () => signOut(auth));
+$("driver-logout")?.addEventListener("click", () => stopDriverAndLogout());
+$("admin-logout")?.addEventListener("click", () => signOut(auth));
+
+async function stopDriverAndLogout() {
+  stopGPS();
+  await signOut(auth);
+}
+
+async function requestRide(form) {
+  const data = Object.fromEntries(new FormData(form).entries());
+  const km = Number(data.distanceKm);
+  if (!Number.isFinite(km) || km <= 0) throw new Error("Please calculate a valid road distance first.");
+  const result = await call("createRide")({
+    pickup: data.pickup,
+    destination: data.destination,
+    distanceKm: km
   });
-  $("signup-form")?.addEventListener("submit", async e => {
-    e.preventDefault(); const f = new FormData(e.currentTarget);
+  return result.data;
+}
+
+$("ride-form")?.addEventListener("submit", async e => {
+  e.preventDefault();
+  if (!currentUser) {
+    say("ride-message", "Please create an account or log in first.");
+    return;
+  }
+  try {
+    const result = await requestRide(e.currentTarget);
+    say("ride-message", `Ride requested. Estimated fare: R${result.estimatedFare.toFixed(2)}.`);
+  } catch (error) {
+    say("ride-message", error.message);
+  }
+});
+
+function renderRide(container, ride, id, role) {
+  const item = document.createElement("div");
+  item.className = "trip";
+
+  const title = document.createElement("strong");
+  title.textContent = `${ride.pickup} → ${ride.destination}`;
+  const detail = document.createElement("p");
+  detail.textContent = `Status: ${ride.status} · Estimated fare: R${Number(ride.estimatedFare).toFixed(2)}`;
+
+  item.append(title, detail);
+
+  if (role === "driver" && ride.status === "requested") {
+    const accept = document.createElement("button");
+    accept.className = "btn yellow";
+    accept.textContent = "Accept ride";
+    accept.onclick = async () => {
+      try {
+        await call("acceptRide")({rideId:id});
+        say("driver-message", "Ride accepted.");
+      } catch(e) { say("driver-message", e.message); }
+    };
+    item.append(accept);
+  }
+
+  if (role === "driver" && ride.status === "accepted" && ride.driverId === currentUser.uid) {
+    const start = document.createElement("button");
+    start.className = "btn yellow";
+    start.textContent = "Start trip";
+    start.onclick = async () => {
+      try {
+        await call("startRide")({rideId:id});
+        say("driver-message", "Trip started. Your GPS is being shared while the trip is active.");
+      } catch(e) { say("driver-message", e.message); }
+    };
+    const complete = document.createElement("button");
+    complete.className = "btn";
+    complete.textContent = "Complete trip";
+    complete.onclick = async () => {
+      try {
+        await call("completeRide")({rideId:id});
+        await remove(ref(rtdb, `liveTrips/${id}`));
+        stopGPS();
+        say("driver-message", "Trip completed.");
+      } catch(e) { say("driver-message", e.message); }
+    };
+    item.append(start, complete);
+  }
+
+  if (role === "passenger" && ride.passengerId === currentUser.uid &&
+      ["accepted","arrived","started"].includes(ride.status)) {
+    const track = document.createElement("button");
+    track.className = "btn yellow";
+    track.textContent = "Track my trip";
+    track.onclick = () => trackTrip(id);
+    item.append(track);
+  }
+
+  container.append(item);
+}
+
+function listenPassenger(uid) {
+  const target = $("my-rides");
+  if (!target) return;
+  return onSnapshot(
+    query(collection(db,"rides"),where("passengerId","==",uid)),
+    snap => {
+      target.replaceChildren();
+      snap.forEach(d => renderRide(target,d.data(),d.id,"passenger"));
+      if (snap.empty) target.textContent = "You have no rides yet.";
+    }
+  );
+}
+
+function listenDriver(uid) {
+  const available = $("available-rides");
+  const active = $("active-rides");
+  if (!available || !active) return;
+  return onSnapshot(
+    query(collection(db,"rides"),where("status","in",["requested","accepted","started","arrived"])),
+    snap => {
+      available.replaceChildren();
+      active.replaceChildren();
+      snap.forEach(d => {
+        const ride = d.data();
+        if (ride.status === "requested") renderRide(available,ride,d.id,"driver");
+        if (ride.driverId === uid) renderRide(active,ride,d.id,"driver");
+      });
+    }
+  );
+}
+
+function startGPS(rideId) {
+  if (!navigator.geolocation) {
+    say("driver-message","GPS is not available in this browser.");
+    return;
+  }
+  stopGPS();
+  gpsWatch = navigator.geolocation.watchPosition(async position => {
+    const p = {
+      lat: position.coords.latitude,
+      lng: position.coords.longitude,
+      accuracy: position.coords.accuracy,
+      updatedAt: Date.now()
+    };
     try {
-      const cred = await createUserWithEmailAndPassword(auth, f.get("email"), f.get("password"));
-      await updateProfile(cred.user, {displayName:f.get("name")});
-      const data = {uid:cred.user.uid, name:f.get("name"), phone:f.get("phone"), email:f.get("email"), role, createdAt:new Date().toISOString()};
-      if (role === "driver") Object.assign(data,{vehicle:f.get("vehicle"), registration:f.get("registration"), seats:Number(f.get("seats") || 7), approvalStatus:"pending", isOnline:false});
-      await setDoc(doc(db,"users",cred.user.uid),data);
-      say($("auth-message"), role === "driver" ? "Registration submitted. An administrator must verify and approve your driver account before you can receive rides." : "Account created successfully.", "success");
-    } catch(err) { say($("auth-message"), friendly(err), "error"); }
-  });
-  $("logout")?.addEventListener("click", () => signOut(auth));
+      await set(ref(rtdb,`liveTrips/${rideId}`),p);
+    } catch(e) { say("driver-message",e.message); }
+  }, error => say("driver-message","GPS error: "+error.message),
+  {enableHighAccuracy:true,maximumAge:5000,timeout:20000});
 }
-function friendly(err) {
-  const map = {"auth/email-already-in-use":"This email already has an account.","auth/invalid-credential":"Email or password is incorrect.","auth/weak-password":"Use a password with at least 6 characters.","permission-denied":"You do not have permission to do that.","functions/failed-precondition":"Your account is not approved or the ride is not in the right state."};
-  return map[err.code] || err.message || "Something went wrong. Please try again.";
+
+function stopGPS() {
+  if (gpsWatch !== null) navigator.geolocation.clearWatch(gpsWatch);
+  gpsWatch = null;
 }
-async function getProfile(user) { const snap = await getDoc(doc(db,"users",user.uid)); return snap.exists() ? snap.data() : null; }
-function showAccount(p) {
-  $("auth-forms")?.classList.add("hidden"); $("account-box")?.classList.remove("hidden");
-  if ($("account-name")) $("account-name").textContent = p?.name || currentUser.displayName || "Village Ride member";
-  if ($("account-email")) $("account-email").textContent = currentUser.email;
+
+async function trackTrip(rideId) {
+  $("tracking-area")?.classList.remove("hidden");
+  if (activeTrackingStop) activeTrackingStop();
+  activeTrackingStop = onValue(ref(rtdb,`liveTrips/${rideId}`),snap => {
+    const p = snap.val();
+    say("tracking-status",p ? "Driver location updated" : "Waiting for driver GPS location…");
+    say("tracking-detail",p
+      ? `Driver location: ${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}`
+      : "The driver has not shared a location yet.");
+    if (p && window.updateTrackingMarker) window.updateTrackingMarker(p.lat,p.lng);
+  }, error => say("tracking-detail",error.message));
 }
-function initPassenger() {
-  wireAuth("passenger");
-  const distance = document.querySelector('[name="distanceKm"]');
-  const updateFare = () => { const km = Number(distance?.value || 0); $("fare").textContent = km > 0 ? money(10 + 3*km) : "R —"; };
-  distance?.addEventListener("input",updateFare);
-  $("ride-form")?.addEventListener("submit",async e=>{
-    e.preventDefault(); if(!currentUser || profile?.role!=="passenger"){say($("ride-message"),"Please create a passenger account or log in first.","error");return;}
-    const f=new FormData(e.currentTarget), km=Number(f.get("distanceKm"));
-    try { const result=await callable("createRide")({pickup:f.get("pickup"),destination:f.get("destination"),distanceKm:km,paymentMethod:"cash"}); say($("ride-message"),`Ride request sent. Reference: ${result.data.rideId}`,"success"); e.currentTarget.reset(); updateFare(); }
-    catch(err){say($("ride-message"),friendly(err),"error");}
-  });
-  onAuthStateChanged(auth,async user=>{
-    cleanup(); currentUser=user; profile=user?await getProfile(user):null;
-    if(user && profile?.role==="passenger"){showAccount(profile);listenPassengerRides(user.uid);}
-    else { $("auth-forms")?.classList.remove("hidden");$("account-box")?.classList.add("hidden");$("passenger-rides").textContent="Log in to see your ride history."; }
-  });
-}
-function listenPassengerRides(uid) {
-  const q=query(collection(db,"rides"),where("passengerId","==",uid),orderBy("createdAt","desc"));
-  unsubscribers.push(onSnapshot(q,snap=>{
-    const el=$("passenger-rides"); if(!snap.size){el.innerHTML='<div class="empty-state">You have not requested any rides yet.</div>';return;}
-    el.innerHTML=snap.docs.map(d=>rideCard(d.id,d.data(),"passenger")).join("");
-    el.querySelectorAll("[data-cancel]").forEach(b=>b.onclick=async()=>{try{await callable("cancelRide")({rideId:b.dataset.cancel});}catch(e){say($("ride-message"),friendly(e),"error");}});
-  },err=>{ $("passenger-rides").textContent=friendly(err); }));
-}
-function rideCard(id,r,mode) {
-  const actions = [];
-  if(mode==="passenger" && r.status==="requested") actions.push(`<button class="btn btn-light" data-cancel="${id}">Cancel</button>`);
-  if(mode==="driver" && r.status==="requested") actions.push(`<button class="btn btn-yellow" data-accept="${id}">Accept ride</button>`);
-  if(mode==="driver" && r.status==="accepted") actions.push(`<button class="btn btn-dark" data-complete="${id}">Complete ride</button>`);
-  return `<article class="ride-card"><div><h3>${escapeHtml(r.pickup)} → ${escapeHtml(r.destination)}</h3><p>${escapeHtml(r.status)} · ${money(r.estimatedFare)} · ${escapeHtml(r.paymentMethod||"cash")}</p><p>${dateText(r.createdAt)} ${r.driverName ? "· Driver: "+escapeHtml(r.driverName):""}</p></div><div class="ride-actions">${actions.join("")}</div></article>`;
-}
-function initDriver() {
-  wireAuth("driver");
-  onAuthStateChanged(auth,async user=>{
-    cleanup(); currentUser=user; profile=user?await getProfile(user):null;
-    if(user && profile?.role==="driver"){
-      showAccount(profile);
-      $("driver-status").textContent=profile.approvalStatus==="approved"?"Your driver account is approved.": "Your application is pending admin approval.";
-      if(profile.approvalStatus==="approved") { renderDriverControls(); listenDriverRides(); }
-      else { $("driver-controls").innerHTML='<div class="empty-state">Your documents and driver details must be checked by an administrator. You cannot receive requests until approved.</div>'; $("driver-rides").textContent="Pending approval."; }
-    } else { $("auth-forms")?.classList.remove("hidden");$("account-box")?.classList.add("hidden");$("driver-controls").textContent="Log in to access driver controls."; }
-  });
-}
-function renderDriverControls() {
-  $("driver-controls").innerHTML=`<div class="online-row"><div><strong>Driver availability</strong><p class="muted">Go online to receive new ride requests.</p></div><input id="online-toggle" type="checkbox" ${profile.isOnline?"checked":""} aria-label="Go online"></div><p class="notice" id="driver-action-message"></p>`;
-  $("online-toggle").onchange=async e=>{try{await callable("setDriverAvailability")({isOnline:e.target.checked});profile.isOnline=e.target.checked;say($("driver-action-message"),e.target.checked?"You are online.":"You are offline.","success");}catch(err){e.target.checked=!e.target.checked;say($("driver-action-message"),friendly(err),"error");}};
-}
-function listenDriverRides() {
-  const openQ=query(collection(db,"rides"),where("status","==","requested"),where("area","==","Mphanama"));
-  const myQ=query(collection(db,"rides"),where("driverId","==",currentUser.uid),orderBy("createdAt","desc"));
-  const render=()=>{};
-  unsubscribers.push(onSnapshot(openQ, openSnap=>{
-    getDocsSafe(myQ).then(mySnap=>{
-      const open=openSnap.docs.map(d=>({id:d.id,data:d.data()}));
-      const mine=mySnap.docs.map(d=>({id:d.id,data:d.data()}));
-      const unique=[...open,...mine.filter(m=>!open.some(o=>o.id===m.id))];
-      $("driver-rides").innerHTML=unique.length?unique.map(x=>rideCard(x.id,x.data,"driver")).join(""):'<div class="empty-state">No ride requests or active trips at the moment. Stay online to receive requests.</div>';
-      $("driver-rides").querySelectorAll("[data-accept]").forEach(b=>b.onclick=async()=>{try{await callable("acceptRide")({rideId:b.dataset.accept});}catch(e){alert(friendly(e));}});
-      $("driver-rides").querySelectorAll("[data-complete]").forEach(b=>b.onclick=async()=>{try{await callable("completeRide")({rideId:b.dataset.complete});}catch(e){alert(friendly(e));}});
-    });
-  },err=>{$("driver-rides").textContent=friendly(err);}));
-}
-async function getDocsSafe(q){ const {getDocs}=await import("https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js"); return getDocs(q); }
-function initAdmin() {
-  $("admin-login-form")?.addEventListener("submit",async e=>{
-    e.preventDefault();const f=new FormData(e.currentTarget);
-    try{await signInWithEmailAndPassword(auth,f.get("email"),f.get("password"));}catch(err){say($("admin-message"),friendly(err),"error");}
-  });
-  $("admin-logout")?.addEventListener("click",()=>signOut(auth));
-  onAuthStateChanged(auth,async user=>{
-    cleanup();currentUser=user;
-    if(!user){$("admin-dashboard").classList.add("hidden");$("admin-login-form").classList.remove("hidden");$("admin-logout").classList.add("hidden");return;}
-    const token=await user.getIdTokenResult(true);
-    if(token.claims.admin!==true){say($("admin-message"),"Access denied. This account does not have administrator privileges.","error");await signOut(auth);return;}
-    $("admin-login-form").classList.add("hidden");$("admin-dashboard").classList.remove("hidden");$("admin-logout").classList.remove("hidden");say($("admin-message"),"Administrator authenticated.","success");listenAdmin();
-  });
-}
+
+$("online-toggle")?.addEventListener("click", async () => {
+  try {
+    online = !online;
+    await call("setDriverAvailability")({isOnline:online});
+    $("online-toggle").textContent = online ? "Go offline" : "Go online";
+    say("driver-message",online ? "You are online." : "You are offline.");
+  } catch(e) {
+    online = false;
+    say("driver-message",e.message);
+  }
+});
+
+onAuthStateChanged(auth, async user => {
+  currentUser = user;
+  if (!user) return;
+
+  const p = await profile(user.uid);
+  if (!p) return;
+
+  if (p.role === "passenger") {
+    $("auth-panel")?.classList.add("hidden");
+    $("account-panel")?.classList.remove("hidden");
+    say("account-name",`Signed in as ${p.name}`);
+    listenPassenger(user.uid);
+  }
+
+  if (p.role === "driver") {
+    $("driver-panel")?.classList.remove("hidden");
+    $("signup-form")?.classList.add("hidden");
+    $("login-form")?.classList.add("hidden");
+    say("driver-name",`Welcome, ${p.name}`);
+    say("approval-status",`Application status: ${p.approvalStatus}`);
+    if (p.approvalStatus === "approved") listenDriver(user.uid);
+  }
+
+  if (location.pathname.includes("admin")) {
+    const token = await user.getIdTokenResult(true);
+    if (token.claims.admin !== true) {
+      say("admin-message","This account is not authorised as an administrator.");
+      return;
+    }
+    $("admin-panel")?.classList.remove("hidden");
+    listenAdmin();
+  }
+});
+
 function listenAdmin() {
-  unsubscribers.push(onSnapshot(query(collection(db,"users"),where("role","==","driver")),snap=>{
-    $("stat-drivers").textContent=snap.size;
-    $("admin-drivers").innerHTML=snap.size?snap.docs.map(d=>{const x=d.data();return `<article class="person-card"><div><h3>${escapeHtml(x.name)}</h3><p>${escapeHtml(x.email)} · ${escapeHtml(x.phone)}</p><p>${escapeHtml(x.vehicle)} · ${escapeHtml(x.registration)} · ${x.seats||"?"} seats</p><span class="small-tag">${escapeHtml(x.approvalStatus||"pending")}</span></div><div class="ride-actions">${x.approvalStatus!=="approved"?`<button class="btn btn-yellow" data-approve="${d.id}">Approve</button>`:"<span class='small-tag'>Approved</span>"}</div></article>`}).join(""):'<div class="empty-state">No driver applications yet.</div>';
-    $("admin-drivers").querySelectorAll("[data-approve]").forEach(b=>b.onclick=async()=>{try{await callable("approveDriver")({driverId:b.dataset.approve});}catch(e){alert(friendly(e));}});
-  }));
-  unsubscribers.push(onSnapshot(query(collection(db,"rides"),orderBy("createdAt","desc")),snap=>{
-    $("stat-rides").textContent=snap.size;$("stat-open").textContent=snap.docs.filter(d=>d.data().status==="requested").length;
-    $("admin-rides").innerHTML=snap.size?snap.docs.map(d=>rideCard(d.id,d.data(),"admin")).join(""):'<div class="empty-state">No rides have been requested.</div>';
-  }));
+  onSnapshot(collection(db,"users"),snap => {
+    const target = $("driver-applications");
+    if (!target) return;
+    target.replaceChildren();
+    snap.forEach(d => {
+      const u = d.data();
+      if (u.role !== "driver" || u.approvalStatus !== "pending") return;
+      const line = document.createElement("div");
+      line.className = "trip";
+      line.textContent = `${u.name} · ${u.phone} · ${u.vehicle || ""} · ${u.registration || ""}`;
+      const button = document.createElement("button");
+      button.className = "btn yellow";
+      button.textContent = "Approve driver";
+      button.onclick = async () => {
+        try {
+          await call("approveDriver")({driverId:d.id});
+        } catch(e) { say("admin-message",e.message); }
+      };
+      line.append(button);
+      target.append(line);
+    });
+  });
+
+  onSnapshot(collection(db,"rides"),snap => {
+    const target = $("all-rides");
+    if (!target) return;
+    target.replaceChildren();
+    snap.forEach(d => {
+      const line = document.createElement("div");
+      line.className = "trip";
+      line.textContent = `${d.data().pickup} → ${d.data().destination} · ${d.data().status} · R${d.data().estimatedFare}`;
+      target.append(line);
+    });
+  });
 }
