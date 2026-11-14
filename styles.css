@@ -1,27 +1,101 @@
-/* HOMEPAGE BACKGROUND IMAGE */
+
+/* =================================
+   VILLAGE RIDE - COLOUR DESIGN
+   Founded by DSR Design | 2026
+   ================================= */
+
+:root {
+  --green: #087f5b;
+  --green-dark: #065b43;
+  --green-light: #e7f5ee;
+  --dark: #172b24;
+  --light: #f5f8f6;
+  --white: #ffffff;
+  --grey: #68756f;
+  --border: #dce5df;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: Arial, Helvetica, sans-serif;
+  background: var(--light);
+  color: var(--dark);
+  line-height: 1.6;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+/* NAVIGATION */
+
+header,
+.navbar {
+  background: var(--white);
+  padding: 17px 6%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 15px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+}
+
+.logo {
+  font-size: 27px;
+  font-weight: 800;
+  color: var(--green);
+}
+
+nav {
+  display: flex;
+  gap: 22px;
+  flex-wrap: wrap;
+}
+
+nav a {
+  font-weight: 600;
+}
+
+nav a:hover {
+  color: var(--green);
+}
+
+/* HOMEPAGE HERO */
 
 .hero {
-  min-height: 570px;
-  padding: 70px 7%;
+  min-height: 470px;
+  padding: 80px 7%;
   display: flex;
   align-items: center;
   color: white;
 
-  background-image:
-    linear-gradient(
-      90deg,
-      rgba(0, 0, 0, 0.75),
-      rgba(0, 0, 0, 0.20)
-    ),
-    url("background.png");
-
-  background-size: cover;
-  background-position: center;
-  background-repeat: no-repeat;
+  background: linear-gradient(
+    135deg,
+    #087f5b,
+    #064b38,
+    #172b24
+  );
 }
 
 .hero-content {
-  max-width: 600px;
+  max-width: 650px;
 }
 
 .hero h1 {
@@ -31,16 +105,215 @@
 }
 
 .hero p {
-  font-size: 18px;
+  font-size: 19px;
   margin-bottom: 25px;
+  color: #e5f5ed;
 }
 
-/* MOBILE BACKGROUND */
+/* BUTTONS */
+
+.primary-btn,
+button.primary-btn {
+  display: inline-block;
+  background: var(--green);
+  color: white;
+  border-radius: 9px;
+  padding: 13px 24px;
+  font-weight: 700;
+  border: none;
+  transition: 0.2s;
+}
+
+.hero .primary-btn {
+  background: white;
+  color: var(--green-dark);
+}
+
+.primary-btn:hover,
+button.primary-btn:hover {
+  background: var(--green-dark);
+  color: white;
+}
+
+.secondary-btn {
+  background: var(--dark);
+  color: white;
+  padding: 12px 20px;
+  border-radius: 8px;
+}
+
+/* PAGE CONTENT */
+
+.container,
+.page-container {
+  width: min(1100px, 92%);
+  margin: 35px auto;
+}
+
+.section-title {
+  font-size: 30px;
+  margin-bottom: 15px;
+}
+
+/* CARDS AND PANELS */
+
+.card,
+.panel,
+.auth-panel,
+.booking-panel {
+  background: var(--white);
+  padding: 24px;
+  border-radius: 15px;
+  border: 1px solid var(--border);
+  box-shadow: 0 5px 22px rgba(0,0,0,0.05);
+  margin-bottom: 22px;
+}
+
+.card h2,
+.panel h2 {
+  margin-bottom: 12px;
+}
+
+/* FORMS */
+
+form {
+  display: grid;
+  gap: 13px;
+}
+
+label {
+  font-weight: 700;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  padding: 13px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: white;
+  outline: none;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--green);
+  box-shadow: 0 0 0 2px rgba(8,127,91,0.12);
+}
+
+/* MAPS */
+
+#map,
+#booking-map,
+#tracking-map,
+.map {
+  width: 100%;
+  min-height: 350px;
+  border-radius: 12px;
+  z-index: 1;
+  margin: 15px 0;
+}
+
+/* FARE BOX */
+
+.fare-box {
+  background: var(--green-light);
+  padding: 18px;
+  border-radius: 10px;
+  margin: 15px 0;
+}
+
+.fare-box strong {
+  color: var(--green);
+  font-size: 25px;
+}
+
+/* STATUS */
+
+.status {
+  padding: 9px 13px;
+  border-radius: 20px;
+  background: var(--green-light);
+  color: var(--green-dark);
+  display: inline-block;
+  font-weight: 700;
+}
+
+/* DASHBOARD */
+
+.dashboard {
+  width: min(1200px, 94%);
+  margin: 30px auto;
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.dashboard-card {
+  background: white;
+  border-radius: 14px;
+  padding: 22px;
+  border: 1px solid var(--border);
+  box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+}
+
+/* FOOTER */
+
+footer {
+  text-align: center;
+  padding: 25px 15px;
+  margin-top: 45px;
+  background: var(--dark);
+  color: white;
+}
+
+footer p {
+  margin: 4px 0;
+}
+
+/* MOBILE */
 
 @media (max-width: 700px) {
+
+  header,
+  .navbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  nav {
+    gap: 12px;
+  }
+
   .hero {
-    min-height: 480px;
-    padding: 45px 6%;
-    background-position: center;
+    min-height: 420px;
+    padding: 55px 6%;
+  }
+
+  .hero h1 {
+    font-size: 40px;
+  }
+
+  .card,
+  .panel,
+  .auth-panel,
+  .booking-panel {
+    padding: 17px;
+  }
+
+  #map,
+  #booking-map,
+  #tracking-map,
+  .map {
+    min-height: 300px;
+  }
+
+  .dashboard-grid {
+    grid-template-columns: 1fr;
   }
 }
