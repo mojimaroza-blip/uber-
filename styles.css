@@ -1,3 +1,4 @@
+
 /* VILLAGE RIDE - MAIN STYLES */
 
 :root {
@@ -28,12 +29,23 @@ a {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
 button {
   cursor: pointer;
+  border: 0;
+  border-radius: 8px;
+  padding: 12px 18px;
+  background: var(--green);
+  color: white;
+  font-weight: 700;
+}
+
+button:hover {
+  opacity: 0.9;
 }
 
 /* NAVIGATION */
@@ -65,7 +77,7 @@ nav a {
   font-weight: 600;
 }
 
-/* HOMEPAGE HERO */
+/* HOMEPAGE BACKGROUND */
 
 .hero {
   min-height: 570px;
@@ -73,9 +85,14 @@ nav a {
   display: flex;
   align-items: center;
   color: white;
+
   background:
-    linear-gradient(90deg, rgba(0,0,0,0.78), rgba(0,0,0,0.18)),
-    url("assets/village-ride-vehicle.jpg") center 55% / cover no-repeat;
+    linear-gradient(
+      90deg,
+      rgba(0,0,0,0.78),
+      rgba(0,0,0,0.18)
+    ),
+    url("background.jpeg") center 55% / cover no-repeat;
 }
 
 .hero-content {
@@ -92,6 +109,8 @@ nav a {
   font-size: 18px;
   margin-bottom: 25px;
 }
+
+/* BUTTONS */
 
 .primary-btn,
 button.primary-btn {
@@ -166,19 +185,6 @@ select:focus,
 textarea:focus {
   outline: 2px solid var(--green);
   border-color: var(--green);
-}
-
-button {
-  border: 0;
-  border-radius: 8px;
-  padding: 12px 18px;
-  background: var(--green);
-  color: white;
-  font-weight: 700;
-}
-
-button:hover {
-  opacity: 0.9;
 }
 
 /* MAPS */
